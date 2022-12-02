@@ -2,11 +2,12 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
-#include "bf.h"
-#include "hp_file.h"
 
-#define RECORDS_NUM 1000
-#define FILE_NAME "data.db"
+#include "./../include/bf.h"
+#include "./../include/hp_file.h"
+
+#define RECORDS_NUM 10
+#define FILE_NAME "data.txt"
 
 #define CALL_OR_DIE(call)     \
   {                           \
@@ -18,24 +19,23 @@
   }
 
 
-int main() {
+int main()
+{
+
   BF_Init(LRU);
 
   HP_CreateFile(FILE_NAME);
   HP_info* info = HP_OpenFile(FILE_NAME);
 
-  Record record;
-  srand(12569874);
-  int r;
-  printf("Insert Entries\n");
-  for (int id = 0; id < RECORDS_NUM; ++id) {
-    record = randomRecord();
-    HP_InsertEntry(info, record);
-  }
+  Record record = {"a",1,"tim","pat","athens"};
+  printf("Inserting entries ...\n");
 
-  printf("RUN PrintAllEntries\n");
+  HP_InsertEntry(info, record );
+
+  printf("Entry insertion completed ...\n");
+
   int id = rand() % RECORDS_NUM;
-  printf("\nSearching for: %d",id);
+  printf("Searching for ID : %d\n",id);
   HP_GetAllEntries(info, id);
 
   HP_CloseFile(info);

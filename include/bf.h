@@ -5,7 +5,7 @@
 extern "C" {
 #endif
 
-#define 512      /* Το μέγεθος ενός block σε bytes */
+#define BF_BLOCK_SIZE 512      /* Το μέγεθος ενός block σε bytes */
 #define BF_BUFFER_SIZE 100     /* Ο μέγιστος αριθμός block που κρατάμε στην μνήμη */
 #define BF_MAX_OPEN_FILES 100  /* Ο μέγιστος αριθμός ανοικτών αρχείων */
 

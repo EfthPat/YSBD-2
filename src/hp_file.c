@@ -23,30 +23,31 @@
 
 /* CONSTANTS */
 #define HEAP_FILE_ID "P"
-#define FAIL -1
-#define SUCCESS 0
-#define NO_NEXT_BLOCK -1
-#define MAXIMUM_BLOCK_RECORDS ((BF_BLOCK_SIZE-sizeof(HP_block_info))/sizeof(Record)) /* TODO : CHECK */
+#define HP_ERROR -1
+#define HP_OK 0
+#define NONE -1
+#define MAXIMUM_BLOCK_RECORDS ((BF_BLOCK_SIZE-sizeof(HP_block_info))/sizeof(Record))
 
 
 /* CREATE AND INITIALIZE A HEAP-FILE */
 int HP_CreateFile(char* fileName)
 {
 
+    /* If no filename was given */
     if(fileName==NULL)
     {
         printf("No filename given!\n");
-        return FAIL;
+        return HP_ERROR;
     }
 
     /* Create a file */
-    int code = BF_CreateFile(filename);
+    int code = BF_CreateFile(fileName);
 
-    /* If file's creating failed */
+    /* If file's creation failed */
     if(code!=BF_OK)
     {
         BF_PrintError(code);
-        return FAIL;
+        return HP_ERROR;
     }
 
     /* Open the file you just created */
@@ -57,7 +58,7 @@ int HP_CreateFile(char* fileName)
     if(code!=BF_OK)
     {
         BF_PrintError(code);
-        return FAIL;
+        return HP_ERROR;
     }
 
     /* Create a container block */
@@ -70,19 +71,19 @@ int HP_CreateFile(char* fileName)
     /* If header's creation failed */
     if(code!=BF_OK)
     {
+        BF_PrintError(code);
 
         /* Destroy the container block */
         BF_Block_Destroy(&block);
 
-        BF_PrintError(code);
-
         /* Close the file */
         code = BF_CloseFile(fileDescriptor);
 
+        /* If file's close failed */
         if(code!=BF_OK)
             BF_PrintError(code);
 
-        return FAIL;
+        return HP_ERROR;
     }
 
     /* Go to the header's start and store heap-file's ID */
@@ -112,17 +113,17 @@ int HP_CreateFile(char* fileName)
     if(code!=BF_OK)
     {
 
+        BF_PrintError(code);
+
         /* Destroy the container block */
         BF_Block_Destroy(&block);
-
-        BF_PrintError(code);
 
         /* Close the file */
         code = BF_CloseFile(fileDescriptor);
         if(code!=BF_OK)
             BF_PrintError(code);
 
-        return FAIL;
+        return HP_ERROR;
     }
 
     /* Destroy the block */
@@ -133,11 +134,11 @@ int HP_CreateFile(char* fileName)
     if(code!=BF_OK)
     {
         BF_PrintError(code);
-        return FAIL;
+        return HP_ERROR;
     }
 
 
-    return SUCCESS;
+    return HP_OK;
 
 }
 
@@ -145,16 +146,16 @@ int HP_CreateFile(char* fileName)
 HP_info* HP_OpenFile(char *fileName)
 {
 
+    /* If no filename was given */
     if(fileName==NULL)
     {
         printf("No filename given!\n");
         return NULL;
     }
 
-
     /* Open the file */
     int fileDescriptor;
-    int code = BF_OpenFile(filename, &fileDescriptor);
+    int code = BF_OpenFile(fileName, &fileDescriptor);
 
     /* If file's opening failed */
     if(code!=BF_OK)
@@ -168,15 +169,16 @@ HP_info* HP_OpenFile(char *fileName)
     BF_Block_Init(&block);
 
     /* Get the header */
-    int code = BF_GetBlock(fileDescriptor, 0, block);
+    code = BF_GetBlock(fileDescriptor, 0, block);
 
-    /* If header allocation failed */
+    /* If header's fetch failed */
     if(code!=BF_OK)
     {
-        /* Destroy the container block */
-        BF_Block_Destroy(&block);
 
         BF_PrintError(code);
+
+        /* Destroy the container block */
+        BF_Block_Destroy(&block);
 
         /* Close the file */
         code = BF_CloseFile(fileDescriptor);
@@ -207,6 +209,7 @@ HP_info* HP_OpenFile(char *fileName)
         /* Close the file */
         code = BF_CloseFile(fileDescriptor);
 
+        /* If file close failed */
         if(code != BF_OK)
             BF_PrintError(code);
 
@@ -220,18 +223,37 @@ HP_info* HP_OpenFile(char *fileName)
     HP_info* fileMetaData = (HP_info*) malloc(sizeof(HP_info));
     memcpy(fileMetaData,dataPointer,sizeof(HP_info));
 
-    /* Return the metadata to the user */
+    /* Set the header as dirty, since you updated its file descriptor */
+    BF_Block_SetDirty(block);
+
+    /* Unpin the header */
+    code = BF_UnpinBlock(block);
+
+    /* If header's unpin failed */
+    if(code != BF_OK)
+    {
+        BF_PrintError(code);
+
+        /* Destroy the container block */
+        BF_Block_Destroy(&block);
+
+        return fileMetaData;
+    }
+
+
     return fileMetaData ;
+
 }
 
 /* UPDATE HEADER'S METADATA AND CLOSE THE HEAP-FILE */
 int HP_CloseFile(HP_info* metaData)
 {
 
+    /* If not file reference was given */
     if(metaData==NULL)
     {
         printf("HP_info structure doesn't exist!\n");
-        return FAIL;
+        return HP_ERROR;
     }
 
     /* Create a container block */
@@ -249,13 +271,14 @@ int HP_CloseFile(HP_info* metaData)
         /* Destroy the container block */
         BF_Block_Destroy(&block);
 
-        return FAIL;
+        return HP_ERROR;
     }
 
     /* Get header's metadata */
     char* dataPointer = BF_Block_GetData(block) + sizeof(HEAP_FILE_ID);
     HP_info fileMetaData;
     memcpy(&fileMetaData, dataPointer, sizeof(HP_info));
+
 
     /* If the last block of the header isn't valid anymore */
     if(fileMetaData.lastBlock != metaData->lastBlock)
@@ -268,26 +291,11 @@ int HP_CloseFile(HP_info* metaData)
         /* Set the header as dirty, since you just updated its 'last block' value */
         BF_Block_SetDirty(block);
 
-        /* ABC */
 
     }
-
-    /* Close the file */
-    code = BF_CloseFile(metaData->fileDescriptor);
-
-    /* If file's close failed */
-    if(code != BF_OK)
-    {
-        BF_PrintError(code);
-
-        return FAIL;
-    }
-
-    /* Delete user's access to metadata, since the file was just closed */
-    free(metaData);
 
     /* Unpin the header */
-    int code = BF_UnpinBlock(block);
+    code = BF_UnpinBlock(block);
 
     /* If header's unpin failed */
     if(code != BF_OK)
@@ -297,23 +305,37 @@ int HP_CloseFile(HP_info* metaData)
         /* Destroy the container block */
         BF_Block_Destroy(&block);
 
-        return FAIL;
+        return HP_ERROR;
     }
 
     /* Destroy the container block */
     BF_Block_Destroy(&block);
 
-    return SUCCESS;
+    /* Close the file */
+    code = BF_CloseFile(metaData->fileDescriptor);
+
+    /* If file's close failed */
+    if(code != BF_OK)
+    {
+
+        BF_PrintError(code);
+
+        return HP_ERROR;
+    }
+
+
+    return HP_OK;
 }
 
 /* INSERT RECORD IN THE HEAP-FILE */
 int HP_InsertEntry(HP_info* metaData, Record record)
 {
 
+    /* If no file reference was given */
     if(metaData==NULL)
     {
         printf("HP_info structure doesn't exist!\n");
-        return FAIL;
+        return HP_ERROR;
     }
 
     /* Create a container block */
@@ -335,7 +357,7 @@ int HP_InsertEntry(HP_info* metaData, Record record)
             /* Destroy the container block */
             BF_Block_Destroy(&block);
 
-            return FAIL;
+            return HP_ERROR;
         }
 
         /* Get block's metadata */
@@ -370,7 +392,7 @@ int HP_InsertEntry(HP_info* metaData, Record record)
                 /* Destroy the container block */
                 BF_Block_Destroy(&block);
 
-                return FAIL;
+                return HP_ERROR;
 
             }
 
@@ -407,7 +429,7 @@ int HP_InsertEntry(HP_info* metaData, Record record)
                 /* Destroy the old container block */
                 BF_Block_Destroy(&block);
 
-                return FAIL;
+                return HP_ERROR;
             }
 
             /* Update the 'last block' of the header */
@@ -418,22 +440,21 @@ int HP_InsertEntry(HP_info* metaData, Record record)
             dataPointer = BF_Block_GetData(block) + BF_BLOCK_SIZE - sizeof(HP_block_info);
             memcpy(dataPointer,&blockMetaData,sizeof(HP_block_info));
 
-            /* Initialize the metadata of the new, last block */
-            dataPointer = BF_Block_GetData(newBlock) + BF_BLOCK_SIZE - sizeof(HP_block_info);
-            blockMetaData.totalRecords = 1;
-            blockMetaData.nextBlock = NO_NEXT_BLOCK;
-            memcpy(dataPointer,blockMetaData, sizeof(HP_block_info));
-
-            /* Insert the new record at the start of the new, last block */
-            dataPointer = BF_Block_GetData(newBlock);
-            memcpy(dataPointer,record, sizeof(Record));
-
             /* Set the previously, last block as dirty, since you updated its 'next block' value */
             BF_Block_SetDirty(block);
 
+            /* Initialize the metadata of the new, last block */
+            dataPointer = BF_Block_GetData(newBlock) + BF_BLOCK_SIZE - sizeof(HP_block_info);
+            blockMetaData.totalRecords = 1;
+            blockMetaData.nextBlock = NONE;
+            memcpy(dataPointer,&blockMetaData, sizeof(HP_block_info));
+
+            /* Insert the new record at the start of the new, last block */
+            dataPointer = BF_Block_GetData(newBlock);
+            memcpy(dataPointer,&record, sizeof(Record));
+
             /* Set the new, last block as dirty, since you initialized its metadata and added a new record into it */
             BF_Block_SetDirty(newBlock);
-
 
             /* Unpin the previously-last block */
             code = BF_UnpinBlock(block);
@@ -452,7 +473,7 @@ int HP_InsertEntry(HP_info* metaData, Record record)
                 /* Destroy the new, last block */
                 BF_Block_Destroy(&newBlock);
 
-                return FAIL;
+                return HP_ERROR;
             }
 
             /* Destroy the previously-last block */
@@ -467,7 +488,7 @@ int HP_InsertEntry(HP_info* metaData, Record record)
                 /* Destroy the new, last block */
                 BF_Block_Destroy(&newBlock);
 
-                return FAIL;
+                return HP_ERROR;
             }
 
             /* Destroy the new, last block */
@@ -492,19 +513,19 @@ int HP_InsertEntry(HP_info* metaData, Record record)
             /* Destroy the container block */
             BF_Block_Destroy(&block);
 
-            return FAIL;
+            return HP_ERROR;
         }
 
         /* Initialize the block metadata of the new block */
         char* dataPointer = BF_Block_GetData(block) + BF_BLOCK_SIZE - sizeof(HP_block_info);
         HP_block_info blockMetaData;
         blockMetaData.totalRecords = 1;
-        blockMetaData.nextBlock = NO_NEXT_BLOCK;
-        memcpy(dataPointer,blockMetaData,sizeof(HP_block_info));
+        blockMetaData.nextBlock = NONE;
+        memcpy(dataPointer,&blockMetaData,sizeof(HP_block_info));
 
         /* Insert the new record at the start of the new block */
         dataPointer = BF_Block_GetData(block);
-        memcpy(dataPointer, record, sizeof(Record));
+        memcpy(dataPointer, &record, sizeof(Record));
 
         /* Set the new block as dirty, since you added the new record and the block metadata into it */
         BF_Block_SetDirty(block);
@@ -523,7 +544,7 @@ int HP_InsertEntry(HP_info* metaData, Record record)
             /* Destroy the container block */
             BF_Block_Destroy(&block);
 
-            return FAIL;
+            return HP_ERROR;
         }
 
         /* Destroy the container block */
@@ -531,7 +552,7 @@ int HP_InsertEntry(HP_info* metaData, Record record)
 
     }
 
-    return SUCCESS;
+    return HP_OK;
 
 }
 
@@ -539,10 +560,11 @@ int HP_InsertEntry(HP_info* metaData, Record record)
 int HP_GetAllEntries(HP_info* metaData, int value)
 {
 
+    /* If no file reference was given */
     if(metaData==NULL)
     {
         printf("HP_info structure doesn't exist!\n");
-        return FAIL;
+        return HP_ERROR;
     }
 
     /* Allocate a container block */
@@ -555,7 +577,7 @@ int HP_GetAllEntries(HP_info* metaData, int value)
     {
 
         /* Get the block */
-        int code = BF_GetBlock(fileDescriptor, i, block);
+        int code = BF_GetBlock(metaData->fileDescriptor, i, block);
 
         /* If the block couldn't be fetched */
         if(code != BF_OK)
@@ -565,7 +587,7 @@ int HP_GetAllEntries(HP_info* metaData, int value)
             /* Destroy the container block */
             BF_Block_Destroy(&block);
 
-            return  FAIL;
+            return  HP_ERROR;
         }
 
         /* Get the block's metadata to access its total records */
@@ -584,7 +606,7 @@ int HP_GetAllEntries(HP_info* metaData, int value)
 
             /* If the record has the desired ID, print the record */
             if(record.id == value)
-                printf("%d, %s, %s, %s\n",record.id,record.name,record.surname,record.city);
+                printRecord(record);
 
             /* Move to the next record */
             dataPointer += sizeof(Record);
@@ -593,7 +615,7 @@ int HP_GetAllEntries(HP_info* metaData, int value)
 
 
         /* Unpin the current block before moving to the next block */
-        code = BF_UnpinBlock();
+        code = BF_UnpinBlock(block);
 
         /* If unpin of the block failed */
         if(code != BF_OK)
@@ -604,7 +626,7 @@ int HP_GetAllEntries(HP_info* metaData, int value)
             /* Destroy the container block */
             BF_Block_Destroy(&block);
 
-            return FAIL;
+            return HP_ERROR;
         }
 
     }

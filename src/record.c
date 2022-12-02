@@ -48,7 +48,8 @@ const char* cities[] = {
 
 static int id = 0;
 
-Record randomRecord(){
+Record randomRecord()
+{
     Record record;
     memcpy(record.record, "record", strlen("record")+1);
     // create a record
@@ -62,9 +63,9 @@ Record randomRecord(){
     return record;
 }
 
-void printRecord(Record record){
+void printRecord(Record record)
+{
     printf("(%d,%s,%s,%s)\n",record.id,record.name,record.surname,record.city);
-
 }
 
 
