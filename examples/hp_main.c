@@ -2,7 +2,7 @@
 #include "./../include/bf.h"
 #include "./../include/hp_file.h"
 
-#define RECORDS_NUM 1000
+#define RECORDS_NUM 20
 #define FILE_NAME "data.txt"
 
 #define CALL_OR_DIE(call)     \
@@ -45,6 +45,7 @@ int main()
   /* Κλεισε το heap file */
   //printf("Closing heap file ...\n");
   HP_CloseFile(info);
+  printStatistics(FILE_NAME);
   //printf("Heap file closed ...\n");
   BF_Close();
 }

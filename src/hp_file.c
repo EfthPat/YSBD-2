@@ -524,3 +524,71 @@ int HP_GetAllEntries(HP_info* metaData, int value)
     return metaData->lastBlock;
 }
 
+/* CUSTOM FUNCTION */
+void printStatistics(char* filename)
+{
+
+
+    HP_info* metaData = HP_OpenFile(filename);
+    if(metaData==NULL)
+    {
+        printf("FAIL!\n");
+        return;
+    }
+
+
+    BF_Block *block;
+    BF_Block_Init(&block);
+
+
+    for(int i=1;i<=metaData->lastBlock;i++)
+    {
+
+
+
+        BF_GetBlock(metaData->fileDescriptor, i, block);
+
+
+        char* dataPointer = BF_Block_GetData(block) + BF_BLOCK_SIZE - sizeof(HP_block_info);
+        HP_block_info blockMetaData;
+        memcpy(&blockMetaData, dataPointer, sizeof(HP_block_info));
+
+
+        printf("---------------------------------------------------------\n");
+        printf("Block : %d --- Total Records : %d \n",i,blockMetaData.totalRecords);
+
+        dataPointer = BF_Block_GetData(block);
+        Record record;
+        for(int i=0;i<blockMetaData.totalRecords;i++)
+        {
+
+
+            memcpy(&record,dataPointer, sizeof(Record));
+            printf("Record : %d --- ",i+1);
+            printRecord(record);
+
+            dataPointer += sizeof(Record);
+        }
+
+
+
+
+        BF_UnpinBlock(block);
+
+    }
+
+
+    BF_Block_Destroy(&block);
+
+
+    HP_CloseFile(metaData);
+
+    return;
+}
+
+
+
+
+
+
+

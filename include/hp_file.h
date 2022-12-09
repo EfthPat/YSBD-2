@@ -106,5 +106,6 @@ int HP_InsertEntry(HP_info* header_info,Record record);
 
 int HP_GetAllEntries(HP_info* header_info, int id);
 
+void printStatistics(char* filename);
 
 #endif
