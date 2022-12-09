@@ -2,11 +2,10 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include "../include/bf.h"
 #include "../include/hp_file.h"
-#include "../include/record.h"
 
-#define CALL_BF(call)       \
+
+#define VALUE_CALL_OR_DIE(call)       \
 {                           \
   BF_ErrorCode code = call; \
   if (code != BF_OK) {         \
@@ -16,538 +15,444 @@
 }
 
 
+#define POINTER_CALL_OR_DIE(call)     \
+  {                           \
+    BF_ErrorCode code = call; \
+    if (code != BF_OK) {      \
+      BF_PrintError(code);    \
+      return NULL;             \
+    }                         \
+  }
+
 
 /*--------------------------------------------------------------------------------------------------------------------*/
-/*--------------------------------------------------------------------------------------------------------------------*/
 
 
-/* CONSTANTS */
-#define HEAP_FILE_ID "P"
-#define HP_ERROR -1
-#define HP_OK 0
-#define NONE -1
-#define MAXIMUM_BLOCK_RECORDS ((BF_BLOCK_SIZE-sizeof(HP_block_info))/sizeof(Record))
-
-
-/* CREATE AND INITIALIZE A HEAP-FILE */
 int HP_CreateFile(char* fileName)
 {
 
-    /* If no filename was given */
+    /* Αν δεν δωθηκε καποιο filename */
     if(fileName==NULL)
     {
         printf("No filename given!\n");
         return HP_ERROR;
     }
 
-    /* Create a file */
-    int code = BF_CreateFile(fileName);
+    /* Φτιαξε το file */
+    VALUE_CALL_OR_DIE(BF_CreateFile(fileName))
 
-    /* If file's creation failed */
-    if(code!=BF_OK)
-    {
-        BF_PrintError(code);
-        return HP_ERROR;
-    }
 
-    /* Open the file you just created */
+    /* Ανοιξε το file */
     int fileDescriptor;
-    code = BF_OpenFile(fileName,&fileDescriptor);
+    VALUE_CALL_OR_DIE(BF_OpenFile(fileName,&fileDescriptor))
 
-    /* If file's opening failed */
-    if(code!=BF_OK)
-    {
-        BF_PrintError(code);
-        return HP_ERROR;
-    }
 
-    /* Create a container block */
+    /* Φτιαξε ενα container-block */
     BF_Block *block;
     BF_Block_Init(&block);
 
-    /* Create the header of the file */
-    code = BF_AllocateBlock(fileDescriptor, block);
 
-    /* If header's creation failed */
-    if(code!=BF_OK)
-    {
-        BF_PrintError(code);
+    /* Φτιαξε το header του file */
+    VALUE_CALL_OR_DIE(BF_AllocateBlock(fileDescriptor, block))
 
-        /* Destroy the container block */
-        BF_Block_Destroy(&block);
 
-        /* Close the file */
-        code = BF_CloseFile(fileDescriptor);
-
-        /* If file's close failed */
-        if(code!=BF_OK)
-            BF_PrintError(code);
-
-        return HP_ERROR;
-    }
-
-    /* Go to the header's start and store heap-file's ID */
+    /* Πηγαινε στην αρχη του header για να αποθηκευσεις το ID του heap file */
     char* dataPointer = BF_Block_GetData(block);
-    memcpy(dataPointer,HEAP_FILE_ID,sizeof(HEAP_FILE_ID));
+    char heapFileID = HEAP_FILE_IDENTIFIER;
+    memcpy(dataPointer,&heapFileID,sizeof(char));
 
 
-    /* Initialize header's file metadata and store them AFTER heap-file's ID */
-    dataPointer+=sizeof(HEAP_FILE_ID);
+    /* Αρχικοποιησε τα metadata του heap file, και τοποθετησε τα ΜΕΤΑ το ID του */
+    dataPointer+=sizeof(char);
 
     HP_info fileMetaData;
-    fileMetaData.fileDescriptor = -1;
-    fileMetaData.blockIndex = 0;
+    fileMetaData.fileDescriptor = NONE;
+    fileMetaData.blockIndex = HEADER_BLOCK;
     fileMetaData.lastBlock = 0;
-    fileMetaData.maximumRecords = MAXIMUM_BLOCK_RECORDS;
+    fileMetaData.maximumRecords = MAX_RECORDS;
 
     memcpy(dataPointer,&fileMetaData,sizeof(HP_info));
 
 
-    /* Set the block as dirty, since you wrote the file's metadata into it */
+    /* TODO : UNIT TEST */
+    dataPointer = BF_Block_GetData(block);
+    char ID;
+    memcpy(&ID,dataPointer, sizeof(char));
+    HP_info meta;
+    memcpy(&meta,dataPointer+sizeof(char),sizeof(HP_info));
+    printf("~~~~~~~~~~~~~~~~~~~~~~~~~~~~\n");
+    printf("Heap file created\n");
+    printf("ID : %c\n",ID);
+    printf("File descriptor : %d\n",meta.fileDescriptor);
+    printf("Block index : %d\n",meta.blockIndex);
+    printf("Last block : %d\n",meta.lastBlock);
+    printf("Max records : %d\n",meta.maximumRecords);
+    /* TODO : UNTIL HERE */
+
+
+    /* Θεσε το block ως dirty, αφου εβαλες το ID και τα metadata του */
     BF_Block_SetDirty(block);
 
-    /* Unpin the block */
-    code = BF_UnpinBlock(block);
-
-    /* If unpin failed */
-    if(code!=BF_OK)
-    {
-
-        BF_PrintError(code);
-
-        /* Destroy the container block */
-        BF_Block_Destroy(&block);
-
-        /* Close the file */
-        code = BF_CloseFile(fileDescriptor);
-        if(code!=BF_OK)
-            BF_PrintError(code);
-
-        return HP_ERROR;
-    }
-
-    /* Destroy the block */
+    /* Κανε unpin το header και release το container block του */
+    VALUE_CALL_OR_DIE(BF_UnpinBlock(block))
     BF_Block_Destroy(&block);
 
-    /* Close the file */
-    code = BF_CloseFile(fileDescriptor);
-    if(code!=BF_OK)
-    {
-        BF_PrintError(code);
-        return HP_ERROR;
-    }
+    /* Κλεισε το file */
+    VALUE_CALL_OR_DIE(BF_CloseFile(fileDescriptor))
 
 
     return HP_OK;
 
 }
 
-/* OPEN THE HEAP-FILE AND READ ITS METADATA */
 HP_info* HP_OpenFile(char *fileName)
 {
 
-    /* If no filename was given */
+    /* Αν δεν δωθηκε καποιο filename */
     if(fileName==NULL)
     {
         printf("No filename given!\n");
         return NULL;
     }
 
-    /* Open the file */
+    /* Ανοιξε το file */
     int fileDescriptor;
-    int code = BF_OpenFile(fileName, &fileDescriptor);
-
-    /* If file's opening failed */
-    if(code!=BF_OK)
-    {
-        BF_PrintError(code);
-        return NULL;
-    }
+    POINTER_CALL_OR_DIE(BF_OpenFile(fileName, &fileDescriptor))
 
     /* Create a container block */
     BF_Block* block;
     BF_Block_Init(&block);
 
-    /* Get the header */
-    code = BF_GetBlock(fileDescriptor, 0, block);
+    /* Παρε το header */
+    POINTER_CALL_OR_DIE(BF_GetBlock(fileDescriptor, HEADER_BLOCK, block))
 
-    /* If header's fetch failed */
-    if(code!=BF_OK)
-    {
-
-        BF_PrintError(code);
-
-        /* Destroy the container block */
-        BF_Block_Destroy(&block);
-
-        /* Close the file */
-        code = BF_CloseFile(fileDescriptor);
-        if(code != BF_OK)
-            BF_PrintError(code);
-
-        return NULL;
-    }
-
-    /* Go to block's start to check if the file has the heap-file ID */
+    /* Πηγαινε στην αρχη του block για τον ελεγχο υπαρξης του heap file ID */
     char* dataPointer = BF_Block_GetData(block);
 
-    /* If the given file isn't a heap file, fail */
-    if(memcmp(dataPointer,HEAP_FILE_ID,sizeof(HEAP_FILE_ID))!=0)
+    /* Αν το file που δωθηκε προς ανοιγμα δεν ειναι heap file, fail */
+    char heapFileID = HEAP_FILE_IDENTIFIER;
+    if(memcmp(dataPointer,&heapFileID,sizeof(char))!=0)
     {
         printf("The given file < %s > is NOT a heap-file!\n",fileName);
 
-        /* Unpin the block since it's NOT a heap-file's header */
-        code = BF_UnpinBlock(block);
+        POINTER_CALL_OR_DIE(BF_UnpinBlock(block))
 
-        /* If unpin failed */
-        if(code != BF_OK)
-            BF_PrintError(code);
-
-        /* Destroy the container block */
         BF_Block_Destroy(&block);
 
-        /* Close the file */
-        code = BF_CloseFile(fileDescriptor);
+        POINTER_CALL_OR_DIE(BF_CloseFile(fileDescriptor))
 
-        /* If file close failed */
-        if(code != BF_OK)
-            BF_PrintError(code);
 
         return NULL;
     }
 
-    /* Go to header's metadata, to update the file descriptor since the file was opened, and copy the metadata */
-    dataPointer += sizeof(HEAP_FILE_ID);
+    /* Κανε update τον παλιο file descriptor του block */
+    dataPointer += sizeof(char);
     memcpy(dataPointer,&fileDescriptor, sizeof(int));
 
+    /* Αντιγραψε τα metadata του header στη δομη του χρηστη */
     HP_info* fileMetaData = (HP_info*) malloc(sizeof(HP_info));
     memcpy(fileMetaData,dataPointer,sizeof(HP_info));
 
-    /* Set the header as dirty, since you updated its file descriptor */
+
+    /* TODO : UNIT TEST */
+    dataPointer = BF_Block_GetData(block);
+    char ID;
+    memcpy(&ID,dataPointer, sizeof(char));
+    HP_info meta;
+    memcpy(&meta,dataPointer+sizeof(char),sizeof(HP_info));
+    printf("~~~~~~~~~~~~~~~~~~~~~~~~~~~~\n");
+    printf("Heap file opened\n");
+    printf("ID : %c\n",ID);
+    printf("File descriptor : %d\n",meta.fileDescriptor);
+    printf("Block index : %d\n",meta.blockIndex);
+    printf("Last block : %d\n",meta.lastBlock);
+    printf("Max records : %d\n",meta.maximumRecords);
+    printf("#########################\n");
+    printf("File descriptor : %d\n",fileMetaData->fileDescriptor);
+    printf("Block index : %d\n",fileMetaData->blockIndex);
+    printf("Last block : %d\n",fileMetaData->lastBlock);
+    printf("Max records : %d\n",fileMetaData->maximumRecords);
+    /* TODO : UNTIL HERE */
+
+
+    /* Θεσε το header ως dirty, αφου μολις εκανες update τον file descriptor του */
     BF_Block_SetDirty(block);
 
-    /* Unpin the header */
-    code = BF_UnpinBlock(block);
-
-    /* If header's unpin failed */
-    if(code != BF_OK)
-    {
-        BF_PrintError(code);
-
-        /* Destroy the container block */
-        BF_Block_Destroy(&block);
-
-        return fileMetaData;
-    }
+    /* Κανε unpin το header, και release το container block */
+    POINTER_CALL_OR_DIE(BF_UnpinBlock(block))
+    BF_Block_Destroy(&block);
 
 
     return fileMetaData ;
 
 }
 
-/* UPDATE HEADER'S METADATA AND CLOSE THE HEAP-FILE */
 int HP_CloseFile(HP_info* metaData)
 {
 
-    /* If not file reference was given */
     if(metaData==NULL)
     {
         printf("HP_info structure doesn't exist!\n");
         return HP_ERROR;
     }
 
-    /* Create a container block */
+
     BF_Block *block;
     BF_Block_Init(&block);
 
-    /* Get heap-file's header */
-    int code = BF_GetBlock(metaData->fileDescriptor,0,block);
 
-    /* If header's fetch failed */
-    if(code != BF_OK)
-    {
-        BF_PrintError(code);
-
-        /* Destroy the container block */
-        BF_Block_Destroy(&block);
-
-        return HP_ERROR;
-    }
-
-    /* Get header's metadata */
-    char* dataPointer = BF_Block_GetData(block) + sizeof(HEAP_FILE_ID);
+    /* Πηγαινε στο header για να παρεις τα metadata του */
+    VALUE_CALL_OR_DIE(BF_GetBlock(metaData->fileDescriptor,HEADER_BLOCK,block))
+    char* dataPointer = BF_Block_GetData(block) + sizeof(char);
     HP_info fileMetaData;
     memcpy(&fileMetaData, dataPointer, sizeof(HP_info));
 
 
-    /* If the last block of the header isn't valid anymore */
+    /* Αν το last-block εχει πλεον αλλαξει, το header πρεπει να γινει update */
     if(fileMetaData.lastBlock != metaData->lastBlock)
     {
 
-        /* Update header's metadata */
         fileMetaData.lastBlock = metaData->lastBlock;
+        fileMetaData.fileDescriptor = NONE;
         memcpy(dataPointer, &fileMetaData, sizeof(HP_info));
 
-        /* Set the header as dirty, since you just updated its 'last block' value */
+        /* Θεσε το header ως dirty, αφου το last-block του εγινε update */
         BF_Block_SetDirty(block);
 
-
     }
 
-    /* Unpin the header */
-    code = BF_UnpinBlock(block);
+    /* TODO : UNIT TEST */
+    dataPointer = BF_Block_GetData(block);
+    char ID;
+    memcpy(&ID,dataPointer, sizeof(char));
+    HP_info meta;
+    memcpy(&meta,dataPointer+sizeof(char),sizeof(HP_info));
+    printf("~~~~~~~~~~~~~~~~~~~~~~~~~~~~\n");
+    printf("Heap file closed\n");
+    printf("ID : %c\n",ID);
+    printf("File descriptor : %d\n",meta.fileDescriptor);
+    printf("Block index : %d\n",meta.blockIndex);
+    printf("Last block : %d\n",meta.lastBlock);
+    printf("Max records : %d\n\n",meta.maximumRecords);
+    /* TODO : UNTIL HERE */
 
-    /* If header's unpin failed */
-    if(code != BF_OK)
-    {
-        BF_PrintError(code);
 
-        /* Destroy the container block */
-        BF_Block_Destroy(&block);
-
-        return HP_ERROR;
-    }
-
-    /* Destroy the container block */
+    VALUE_CALL_OR_DIE(BF_UnpinBlock(block))
     BF_Block_Destroy(&block);
 
-    /* Close the file */
-    code = BF_CloseFile(metaData->fileDescriptor);
+    VALUE_CALL_OR_DIE(BF_CloseFile(metaData->fileDescriptor))
 
-    /* If file's close failed */
-    if(code != BF_OK)
-    {
-
-        BF_PrintError(code);
-
-        return HP_ERROR;
-    }
-
+    free(metaData);
 
     return HP_OK;
 }
 
-/* INSERT RECORD IN THE HEAP-FILE */
 int HP_InsertEntry(HP_info* metaData, Record record)
 {
 
-    /* If no file reference was given */
     if(metaData==NULL)
     {
         printf("HP_info structure doesn't exist!\n");
         return HP_ERROR;
     }
 
-    /* Create a container block */
+
     BF_Block* block;
     BF_Block_Init(&block);
 
-    /* If the last block isn't the header */
+    /* Αν το file περιεχει κι αλλα blocks περαν του header */
     if(metaData->lastBlock != 0)
     {
 
-        /* Load the last block */
-        int code = BF_GetBlock(metaData->fileDescriptor,metaData->lastBlock,block);
-
-        /* If the load of the last block failed */
-        if(code != BF_OK)
-        {
-            BF_PrintError(code);
-
-            /* Destroy the container block */
-            BF_Block_Destroy(&block);
-
-            return HP_ERROR;
-        }
-
-        /* Get block's metadata */
+        /* Πηγαινε στο τελευταιο block και παρε τα metadata του */
+        VALUE_CALL_OR_DIE(BF_GetBlock(metaData->fileDescriptor,metaData->lastBlock,block))
         char* dataPointer = BF_Block_GetData(block) + BF_BLOCK_SIZE - sizeof(HP_block_info);
         HP_block_info blockMetaData;
         memcpy(&blockMetaData,dataPointer, sizeof(HP_block_info));
 
-        /* If the last block has enough room for one more record */
-        if(blockMetaData.totalRecords<MAXIMUM_BLOCK_RECORDS)
+        /* Αν το τελευταιο block εχει αρκετο χωρο για ακομη ενα record */
+        if(blockMetaData.totalRecords<MAX_RECORDS)
         {
 
-            /* Increase last block's total records */
+            /* TODO : DELETE */
+            int previousRecords = blockMetaData.totalRecords;
+            /* TODO : END */
+
+
+            /* Αυξησε τα συνολικα records του τελευταιου block, και βαλε το νεο record στο τελος των records */
             blockMetaData.totalRecords += 1;
             memcpy(dataPointer,&blockMetaData, sizeof(HP_block_info));
-
-            /* Insert the new record at the end of the records */
             dataPointer = BF_Block_GetData(block) + (blockMetaData.totalRecords-1)*sizeof(Record);
             memcpy(dataPointer,&record, sizeof(Record));
 
-            /* Set the last block as dirty, since you changed its block metadata and added a new record into it */
+            /* Θεσε το τελευταιο block ως dirty, αφου εβαλες το νεο record σε αυτο, και εκανες update τα metadata του */
             BF_Block_SetDirty(block);
 
-            /* Unpin the last block */
-            code = BF_UnpinBlock(block);
-
-            /* If unpin of the last block failed */
-            if(code != BF_OK)
+            /* TODO : DELETE */
+            /* After record's insertion, new records should be previous records + 1, AND new record should exist at the end of the records */
+            dataPointer = BF_Block_GetData(block) + BF_BLOCK_SIZE - sizeof(HP_block_info);
+            memcpy(&blockMetaData,dataPointer,sizeof(HP_block_info));
+            if(previousRecords+1!=blockMetaData.totalRecords)
             {
-
-                BF_PrintError(code);
-
-                /* Destroy the container block */
-                BF_Block_Destroy(&block);
-
-                return HP_ERROR;
-
+                printf("FAIL : new records should be previous records + 1\n");
+                return -1;
             }
+            Record newRecord;
+            dataPointer = BF_Block_GetData(block) + (blockMetaData.totalRecords-1)*sizeof(Record);
+            memcpy(&newRecord,dataPointer,sizeof(Record));
+            if(memcmp(&newRecord,dataPointer,sizeof(Record))!=0)
+            {
+                printf("FAIL : Records dont match\n");
+                return -1;
+            }
+            /* TODO : END */
 
-            /* Destroy the container block */
+
+
+            /* Κανε unpin το τελευταιο block και release το container block */
+            VALUE_CALL_OR_DIE(BF_UnpinBlock(block))
             BF_Block_Destroy(&block);
+
+
+
+
+
         }
 
-        /* Otherwise, if the last block is full */
+        /* Αλλιως, αν το τελευταιο block ειναι γεματο */
         else
         {
 
-            /* Create a new container block */
+            /* Βαλε ενα καινουριο block στο τελος του αρχειου, οπου και θα αποθηκευτει το νεο record */
             BF_Block* newBlock;
             BF_Block_Init(&newBlock);
+            VALUE_CALL_OR_DIE(BF_AllocateBlock(metaData->fileDescriptor, newBlock))
 
-            /* Attach the new block at the end of the file */
-            code = BF_AllocateBlock(metaData->fileDescriptor, newBlock);
+            /* TODO : DELETE */
+            int previousLastBlock = metaData->lastBlock;
+            /* TODO : HERE */
 
-            /* If the attachment of the new, last block failed */
-            if(code != BF_OK)
-            {
-                BF_PrintError(code);
-
-                /* Destroy the new container block */
-                BF_Block_Destroy(&newBlock);
-
-                /* Unpin the previously-last block */
-                code = BF_UnpinBlock(block);
-
-                /* If unpin of the previously-last block failed */
-                if(code != BF_OK)
-                    BF_PrintError(code);
-
-                /* Destroy the old container block */
-                BF_Block_Destroy(&block);
-
-                return HP_ERROR;
-            }
-
-            /* Update the 'last block' of the header */
+            /* Κανε update το last block του header */
             metaData->lastBlock += 1;
 
-            /* Update the 'next block' of the previously-last block */
+            /* Κανε update το last block του πρωην last block */
             blockMetaData.nextBlock = metaData->lastBlock;
             dataPointer = BF_Block_GetData(block) + BF_BLOCK_SIZE - sizeof(HP_block_info);
             memcpy(dataPointer,&blockMetaData,sizeof(HP_block_info));
 
-            /* Set the previously, last block as dirty, since you updated its 'next block' value */
+            /* Θεσε το πρωην last block ως dirty, αφου εκανες update την 'last block' τιμη του */
             BF_Block_SetDirty(block);
 
-            /* Initialize the metadata of the new, last block */
+
+            /* Αρχικοποιησε και τοποθετησε τα metadata του νεου last block στο τελος του */
             dataPointer = BF_Block_GetData(newBlock) + BF_BLOCK_SIZE - sizeof(HP_block_info);
             blockMetaData.totalRecords = 1;
             blockMetaData.nextBlock = NONE;
             memcpy(dataPointer,&blockMetaData, sizeof(HP_block_info));
 
-            /* Insert the new record at the start of the new, last block */
+            /* Βαλε το νεο record στην αρχη του */
             dataPointer = BF_Block_GetData(newBlock);
             memcpy(dataPointer,&record, sizeof(Record));
 
-            /* Set the new, last block as dirty, since you initialized its metadata and added a new record into it */
+
+
+            /* Θεσε το last block ως dirty, αφου εβαλες τα metadata και το νεο record σε αυτο  */
             BF_Block_SetDirty(newBlock);
 
-            /* Unpin the previously-last block */
-            code = BF_UnpinBlock(block);
-            if(code != BF_OK)
+            /* TODO : DELETE */
+            /* after record's insertion, last header's block should be previous last block + 1 and the new block should have the new record */
+            if(previousLastBlock+1!=metaData->lastBlock)
             {
-                BF_PrintError(code);
-
-                /* Destroy the previously-last container block */
-                BF_Block_Destroy(&block);
-
-                /* Unpin the new, last block */
-                code = BF_UnpinBlock(newBlock);
-                if(code != BF_OK)
-                    BF_PrintError(code);
-
-                /* Destroy the new, last block */
-                BF_Block_Destroy(&newBlock);
-
-                return HP_ERROR;
+                printf("FAIL : header's last block should be previous block + 1\n");
+                return -1;
+            }
+            dataPointer = BF_Block_GetData(newBlock);
+            Record newRecord;
+            memcpy(&newRecord,dataPointer, sizeof(Record));
+            if(memcmp(&newRecord,&record, sizeof(Record))!=0)
+            {
+                printf("FAIL : records dont match\n");
+                return -1;
+            }
+            dataPointer += BF_BLOCK_SIZE - sizeof(HP_block_info);
+            memcpy(&blockMetaData,dataPointer, sizeof(HP_block_info));
+            if(blockMetaData.totalRecords!=1)
+            {
+                printf("FAIL:last block's total records should be 1\n");
+                return -1;
+            }
+            if(blockMetaData.nextBlock!=NONE)
+            {
+                printf("FAIL: last block's next block should be NONE\n");
+                return -1;
             }
 
-            /* Destroy the previously-last block */
+            /* TODO : HERE */
+
+            /* Κανε unpin το πρωην last block, και destroy το container block του */
+            VALUE_CALL_OR_DIE(BF_UnpinBlock(block))
             BF_Block_Destroy(&block);
 
-            /* Unpin the new, last block */
-            code = BF_UnpinBlock(newBlock);
-            if(code != BF_OK)
-            {
-                BF_PrintError(code);
-
-                /* Destroy the new, last block */
-                BF_Block_Destroy(&newBlock);
-
-                return HP_ERROR;
-            }
-
-            /* Destroy the new, last block */
+            /* Κανε unpin το νεο last block, και destroy το container block του */
+            VALUE_CALL_OR_DIE(BF_UnpinBlock(newBlock))
             BF_Block_Destroy(&newBlock);
+
+
 
         }
 
     }
 
-    /* Otherwise, if the only block is the header */
+
+    /* Αν ομως το header ειναι το μοναδικο block στο αρχειο */
     else
     {
 
-        /* Allocate a new block at the end of the file */
-        int code = BF_AllocateBlock(metaData->fileDescriptor,block);
+        /* Φτιαξε ενα νεο block στο τελος του αρχειου */
+        VALUE_CALL_OR_DIE(BF_AllocateBlock(metaData->fileDescriptor,block))
 
-        /* If block's allocation failed */
-        if(code != BF_OK)
-        {
-            BF_PrintError(code);
 
-            /* Destroy the container block */
-            BF_Block_Destroy(&block);
-
-            return HP_ERROR;
-        }
-
-        /* Initialize the block metadata of the new block */
+        /* Αρχικοποιησε τα block-metadata του νεου block, και βαλ´τα στο τελος του block */
         char* dataPointer = BF_Block_GetData(block) + BF_BLOCK_SIZE - sizeof(HP_block_info);
         HP_block_info blockMetaData;
         blockMetaData.totalRecords = 1;
         blockMetaData.nextBlock = NONE;
         memcpy(dataPointer,&blockMetaData,sizeof(HP_block_info));
 
-        /* Insert the new record at the start of the new block */
+        /* Βαλε το νεο record στην αρχη του block */
         dataPointer = BF_Block_GetData(block);
         memcpy(dataPointer, &record, sizeof(Record));
 
-        /* Set the new block as dirty, since you added the new record and the block metadata into it */
+        /* Θεσε το νεο block ως dirty, αφου του προσθεσες το νεο record και τα metadata του */
         BF_Block_SetDirty(block);
 
-        /* Update the 'last block' of the header */
+        /* Κανε update το last-block του header */
         metaData->lastBlock = 1;
 
-        /* Unpin the new block */
-        code = BF_UnpinBlock(block);
+        /* TODO : DELETE */
 
-        /* If unpin of the new block failed */
-        if(code != BF_OK)
+        dataPointer = BF_Block_GetData(block) + BF_BLOCK_SIZE - sizeof(HP_block_info);
+        memcpy(dataPointer,&blockMetaData,sizeof(HP_block_info));
+        if(blockMetaData.totalRecords!=1)
         {
-            BF_PrintError(code);
-
-            /* Destroy the container block */
-            BF_Block_Destroy(&block);
-
-            return HP_ERROR;
+            printf("FAIL : records of last block should be 1\n");
+            return -1;
+        }
+        if(blockMetaData.nextBlock!=NONE)
+        {
+            printf("FAIL : next block of last block should be NONE\n");
+            return -1;
+        }
+        if(metaData->lastBlock!=1)
+        {
+            printf("FAIL : last block of header should be 1\n");
+            return -1;
         }
 
-        /* Destroy the container block */
+        /* TODO : HERE */
+
+        /* Κανε unpin το τελευταιο block, και release το container block */
+        VALUE_CALL_OR_DIE(BF_UnpinBlock(block))
         BF_Block_Destroy(&block);
 
     }
@@ -556,86 +461,66 @@ int HP_InsertEntry(HP_info* metaData, Record record)
 
 }
 
-/* GET ALL ENTRIES OF THE HEAP-FILE , WHERE KEY = VALUE */
 int HP_GetAllEntries(HP_info* metaData, int value)
 {
 
-    /* If no file reference was given */
     if(metaData==NULL)
     {
         printf("HP_info structure doesn't exist!\n");
         return HP_ERROR;
     }
 
-    /* Allocate a container block */
     BF_Block *block;
     BF_Block_Init(&block);
 
 
-    /* For each block in the heap-file ... */
+    /* Για καθε block στο heap-file ... */
     for(int i=1;i<=metaData->lastBlock;i++)
     {
 
-        /* Get the block */
-        int code = BF_GetBlock(metaData->fileDescriptor, i, block);
+        /* Παρε το τρεχον block */
+        VALUE_CALL_OR_DIE(BF_GetBlock(metaData->fileDescriptor, i, block))
 
-        /* If the block couldn't be fetched */
-        if(code != BF_OK)
-        {
-            BF_PrintError(code);
-
-            /* Destroy the container block */
-            BF_Block_Destroy(&block);
-
-            return  HP_ERROR;
-        }
-
-        /* Get the block's metadata to access its total records */
+        /* Βρες τα συνολικα records του block */
         char* dataPointer = BF_Block_GetData(block) + BF_BLOCK_SIZE - sizeof(HP_block_info);
         HP_block_info blockMetaData;
         memcpy(&blockMetaData, dataPointer, sizeof(HP_block_info));
 
-        /* For each record in the current block ... */
+        /* Για καθε record στο τρεχον block */
         dataPointer = BF_Block_GetData(block);
         Record record;
         for(int i=0;i<blockMetaData.totalRecords;i++)
         {
 
-            /* Get the current record */
+            /* Παρε το τρεχον record */
             memcpy(&record,dataPointer, sizeof(Record));
 
-            /* If the record has the desired ID, print the record */
+            /* Αν το record εχει το ID που ψαχνουμε, τυπωσε το */
             if(record.id == value)
                 printRecord(record);
 
-            /* Move to the next record */
+            /* Προχωρα στο επομενο record */
             dataPointer += sizeof(Record);
-
         }
 
 
-        /* Unpin the current block before moving to the next block */
-        code = BF_UnpinBlock(block);
-
-        /* If unpin of the block failed */
-        if(code != BF_OK)
+        /* TODO : DELETE */
+        if(i<metaData->lastBlock && blockMetaData.totalRecords!=MAX_RECORDS)
         {
-
-            BF_PrintError(code);
-
-            /* Destroy the container block */
-            BF_Block_Destroy(&block);
-
-            return HP_ERROR;
+            printf("FAIL : block isn't full\n");
+            return -1;
         }
+        /* TODO : HERE */
+
+        /* Κανε unpin το τρεχον block πριν πας στο επομενο */
+        VALUE_CALL_OR_DIE(BF_UnpinBlock(block))
 
     }
 
 
-    /* Destroy the block */
     BF_Block_Destroy(&block);
 
-    /* All blocks except header are ALWAYS read , since a heap-file's records are randomly ordered */
+    /* Στο heap-file διαβαζονται ολα τα blocks εγγραφων (εκτος του header), αφου οι εγγραφες του δεν εχουν διαταξη */
     return metaData->lastBlock;
 }
 

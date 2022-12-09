@@ -1,23 +1,35 @@
 #ifndef HP_FILE_H
 #define HP_FILE_H
-#include <record.h>
 
+#include <stdbool.h>
+#include <bf.h>
+#include "record.h"
 
+/* Σταθερες */
+
+#define HP_OK 0
+#define HP_ERROR (-1)
+#define NONE (-1)
+#define HEADER_BLOCK 0
+
+#define HEAP_FILE_IDENTIFIER 'P'
+
+#define MAX_RECORDS ((BF_BLOCK_SIZE-sizeof(HP_block_info))/sizeof(Record))
 
 /* Η δομή HP_info κρατάει μεταδεδομένα που σχετίζονται με το αρχείο σωρού */
 typedef struct
 {
 
-    /* File's descriptor */
+    /* Ο file descriptor του αρχειου */
     int fileDescriptor;
 
-    /* The index of the block this structure is stored at -- always 0 */
+    /* Το index του block στο οποιο βρισκεται αποθηκευμενη η δομη HP_info */
     int blockIndex;
 
-    /* The index of the last block */
+    /* Το index του τελευταιου block */
     unsigned int lastBlock;
 
-    /* The maximum amount of records a NON-HEADER block can store */
+    /* Ο μεγιστος αριθμος εγγραφων που μπορει να αποθηκευσει ενα οποιοδηποτε αλλο block */
     unsigned int maximumRecords;
 
 
@@ -28,10 +40,10 @@ typedef struct
 typedef struct
 {
 
-    /* The total records the current block stores */
+    /* Ο συνολικος αριθμος απο records που εχουν αποθηκευτει στο block */
     unsigned int totalRecords;
 
-    /* The next block of the current block. If nextBlock = -1 , then there's no next block */
+    /* Το index του επομενου block. Αν nextBlock = NONE, τοτε το block αυτο ειναι το τελευταιο */
     int nextBlock;
 
 } HP_block_info;
